@@ -24,21 +24,23 @@ func getLinesChannel(f io.ReadCloser) <-chan string {
 			bytes := make([]byte, 8)
 			bytesRead, err := f.Read(bytes)
 			if err != nil {
+				if currentLine != "" {
+					lines <- currentLine
+				}
 				if errors.Is(err, io.EOF) {
-					return
+					break
 				} else {
-					log.Printf("Error while reading file: %s", err)
+					log.Printf("Error while reading file: %s\n", err)
 					return
 				}
 			}
-			if bytesRead > 0 {
-				currentLine += string(bytes)
-				if strings.Contains(currentLine, "\n") {
-					splits := strings.Split(currentLine, "\n")
-					lines <- splits[0]
-					currentLine = strings.Join(splits[1:], "\n")
-				}
+			str := string(bytes[:bytesRead])
+			parts := strings.Split(str, "\n")
+			for i := 0; i < len(parts)-1; i++ {
+				lines <- fmt.Sprintf("%s%s", currentLine, parts[i])
+				currentLine = ""
 			}
+			currentLine += parts[len(parts)-1]
 		}
 	}()
 
