@@ -6,32 +6,55 @@ import (
 	"io"
 	"log"
 	"os"
+	"strings"
 )
 
 const inputFilePath = "messages.txt"
+
+func getLinesChannel(f io.ReadCloser) <-chan string {
+	fmt.Println("Reading data from file.")
+	fmt.Println("=====================================")
+
+	lines := make(chan string)
+
+	go func() {
+		defer f.Close()
+		defer close(lines)
+
+		currentLine := ""
+		for {
+			bytes := make([]byte, 8)
+			bytesRead, err := f.Read(bytes)
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					return
+				} else {
+					log.Printf("Error while reading file: %s", err)
+					return
+				}
+			}
+			if bytesRead > 0 {
+				currentLine += string(bytes)
+				if strings.Contains(currentLine, "\n") {
+					splits := strings.Split(currentLine, "\n")
+					lines <- splits[0]
+					currentLine = strings.Join(splits[1:], "\n")
+				}
+			}
+		}
+	}()
+
+	return lines
+}
 
 func main() {
 	file, err := os.Open(inputFilePath)
 	if err != nil {
 		log.Fatalf("Could not open file: %s\n", err)
 	}
-	defer file.Close()
 
-	fmt.Printf("Reading data from %s\n", inputFilePath)
-	fmt.Println("=====================================")
-
-	for {
-		bytes := make([]byte, 8)
-		bytesRead, err := file.Read(bytes)
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				os.Exit(0)
-			} else {
-				log.Fatalf("Error while reading file: %s", err)
-			}
-		}
-		if bytesRead > 0 {
-			fmt.Printf("read: %s\n", bytes)
-		}
+	lines := getLinesChannel(file)
+	for line := range lines {
+		fmt.Println("read:", line)
 	}
 }
