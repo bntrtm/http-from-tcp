@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	h "github.com/bntrtm/http-from-tcp/internal/headers"
 )
 
 // crlf (Carriage Return, Line Feed) is the sequence used
@@ -29,11 +31,13 @@ type parserState int
 
 const (
 	StatusInitialized parserState = iota
+	StatusParsingHeaders
 	StatusDone
 )
 
 type Request struct {
 	RequestLine RequestLine
+	Headers     h.Headers
 	state       parserState
 }
 
@@ -76,6 +80,94 @@ func validateVersion(s string) (string, error) {
 	return version, nil
 }
 
+// RequestFromReader returns a new Request object, the number of bytes consumed
+// from the input reader, and any relevant error.
+func RequestFromReader(reader io.Reader) (*Request, error) {
+	buf := make([]byte, bufferSize)
+	readToIndex := 0
+
+	r := &Request{
+		state:   StatusInitialized,
+		Headers: h.NewHeaders(),
+	}
+	for r.state != StatusDone {
+		if readToIndex >= len(buf) {
+			grown := make([]byte, len(buf)*2)
+			copy(grown, buf)
+			buf = grown
+		}
+
+		nRead, err := reader.Read(buf[readToIndex:])
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				if r.state != StatusDone {
+					return nil, fmt.Errorf("incomplete request, in state: %d, read n bytes on EOF: %d", r.state, nRead)
+				}
+				break
+			}
+			return nil, err
+		}
+		readToIndex += nRead
+
+		nParsed, err := r.parse(buf[:readToIndex])
+		if err != nil {
+			return nil, err
+		}
+
+		copy(buf, buf[nParsed:])
+		readToIndex -= nParsed
+	}
+
+	return r, nil
+}
+
+func (r *Request) parse(data []byte) (int, error) {
+	totalBytesParsed := 0
+	for r.state != StatusDone {
+		n, err := r.parseSingle(data[totalBytesParsed:])
+		if err != nil {
+			return 0, err
+		}
+		if n == 0 {
+			break
+		}
+		totalBytesParsed += n
+	}
+
+	return totalBytesParsed, nil
+}
+
+func (r *Request) parseSingle(data []byte) (int, error) {
+	switch r.state {
+	case StatusInitialized:
+		l, n, err := parseRequestLine(data)
+		if err != nil {
+			return 0, err
+		}
+		if n == 0 {
+			return 0, nil
+		}
+		r.RequestLine = *l
+		r.state = StatusParsingHeaders
+		return n, nil
+
+	case StatusParsingHeaders:
+		n, done, err := r.Headers.Parse(data)
+		if err != nil {
+			return 0, err
+		}
+		if done {
+			r.state = StatusDone
+		}
+		return n, nil
+
+	case StatusDone:
+		return 0, fmt.Errorf("cannot read data with Request in done state")
+	default:
+		return 0, fmt.Errorf("unknown Request state")
+	}
+}
+
 // parseRequestLine builds a new RequestLine given an HTTP request as a string.
 func parseRequestLine(data []byte) (*RequestLine, int, error) {
 	bytes, _, found := bytes.Cut(data, []byte(crlf))
@@ -111,59 +203,4 @@ func parseRequestLine(data []byte) (*RequestLine, int, error) {
 		RequestTarget: target,
 		HTTPVersion:   version,
 	}, numParsed, nil
-}
-
-func (r *Request) parse(data []byte) (int, error) {
-	switch r.state {
-	case StatusInitialized:
-		l, n, err := parseRequestLine(data)
-		if err != nil {
-			return n, err
-		} else if n == 0 {
-			return 0, nil
-		}
-		r.RequestLine = *l
-		r.state = StatusDone
-
-		return n, nil
-	case StatusDone:
-		return 0, fmt.Errorf("cannot read data with Request in done state")
-	default:
-		return 0, fmt.Errorf("unknown Request state")
-	}
-}
-
-// RequestFromReader returns a new Request object, the number of bytes consumed
-// from the input reader, and any relevant error.
-func RequestFromReader(reader io.Reader) (*Request, error) {
-	buf := make([]byte, bufferSize)
-	readToIndex := 0
-
-	r := Request{state: StatusInitialized}
-	for r.state != StatusDone {
-		if len(buf) == cap(buf) {
-			grown := make([]byte, len(buf)*2)
-			copy(grown, buf)
-			buf = grown
-		}
-
-		nRead, err := reader.Read(buf[readToIndex:])
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				r.state = StatusDone
-				break
-			}
-		}
-		readToIndex += nRead
-
-		nParsed, err := r.parse(buf[:readToIndex])
-		if err != nil {
-			return nil, err
-		}
-
-		copy(buf, buf[nParsed:])
-		readToIndex -= nParsed
-	}
-
-	return &r, nil
 }
