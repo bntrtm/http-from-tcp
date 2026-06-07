@@ -2,6 +2,7 @@ package request
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -13,14 +14,24 @@ import (
 // to denote newlines in HTTP requests.
 const CRLF = "\r\n"
 
+const bufferSize = 8
+
 type RequestLine struct {
 	HTTPVersion   string
 	RequestTarget string
 	Method        string
 }
 
+type parserState int
+
+const (
+	StatusInitialized parserState = iota
+	StatusDone
+)
+
 type Request struct {
 	RequestLine RequestLine
+	state       parserState
 }
 
 func validateMethod(s string) (string, error) {
@@ -63,53 +74,97 @@ func validateVersion(s string) (string, error) {
 }
 
 // parseRequestLine builds a new RequestLine given an HTTP request as a string.
-func parseRequestLine(data []byte) (*RequestLine, error) {
-	idx := bytes.Index(data, []byte(CRLF))
-	if idx == -1 {
-		return nil, fmt.Errorf("could not find CRLF in request-line")
+func parseRequestLine(data []byte) (*RequestLine, int, error) {
+	bytes, _, found := bytes.Cut(data, []byte(CRLF))
+	if !found {
+		return nil, 0, nil
 	}
 
-	str := string(data[:idx])
-	parts := strings.Split(str, " ")
+	numParsed := len(bytes) + len([]byte(CRLF))
+
+	parts := strings.Split(string(bytes), " ")
 
 	if n := len(parts); n < 3 {
-		return nil, fmt.Errorf("invalid HTTP request; missing one or more attributes in request-line")
+		return nil, numParsed, fmt.Errorf("invalid HTTP request; missing one or more attributes in request-line, got only %d", n)
 	} else if n > 3 {
-		return nil, fmt.Errorf("invalid HTTP request; expected only three attributes in request-line, but got %d", n)
+		return nil, numParsed, fmt.Errorf("invalid HTTP request; expected only three attributes in request-line, but got %d", n)
 	}
+
 	method, err := validateMethod(parts[0])
 	if err != nil {
-		return nil, err
+		return nil, numParsed, err
 	}
 	target, err := validateTarget(parts[1])
 	if err != nil {
-		return nil, err
+		return nil, numParsed, err
 	}
 	version, err := validateVersion(parts[2])
 	if err != nil {
-		return nil, err
+		return nil, numParsed, err
 	}
 
 	return &RequestLine{
 		Method:        method,
 		RequestTarget: target,
 		HTTPVersion:   version,
-	}, nil
+	}, numParsed, nil
+}
+
+func (r *Request) parse(data []byte) (int, error) {
+	switch r.state {
+	case StatusInitialized:
+		l, n, err := parseRequestLine(data)
+		if err != nil {
+			return n, err
+		} else if n == 0 {
+			return 0, nil
+		}
+		r.RequestLine = *l
+		r.state = StatusDone
+
+		return n, nil
+	case StatusDone:
+		return 0, fmt.Errorf("cannot read data with Request in done state")
+	default:
+		return 0, fmt.Errorf("unknown Request state")
+	}
 }
 
 // RequestFromReader returns a new Request object, the number of bytes consumed
 // from the input reader, and any relevant error.
 func RequestFromReader(reader io.Reader) (*Request, error) {
-	bytes, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, err
-	}
-	reqLine, err := parseRequestLine(bytes)
-	if err != nil {
-		return nil, err
+	buf := make([]byte, bufferSize)
+	readToIndex := 0
+
+	r := Request{state: StatusInitialized}
+	for r.state != StatusDone {
+		if len(buf) == cap(buf) {
+			grown := make([]byte, len(buf)*2)
+			copy(grown, buf)
+			buf = grown
+		}
+
+		nRead, err := reader.Read(buf[readToIndex:])
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				r.state = StatusDone
+				break
+			}
+		}
+		readToIndex += nRead
+
+		nParsed, err := r.parse(buf[:readToIndex])
+		if err != nil {
+			return nil, err
+		}
+
+		size := len(buf) - nParsed
+		c := make([]byte, size)
+		copy(c, buf[nParsed:])
+		buf = c
+
+		readToIndex -= nParsed
 	}
 
-	return &Request{
-		RequestLine: *reqLine,
-	}, nil
+	return &r, nil
 }
