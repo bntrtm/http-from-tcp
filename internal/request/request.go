@@ -1,3 +1,6 @@
+// Package request provides the [Request] type, used to represent HTTP/1.1 requests.
+// A Request may be created with the provision of a stream of data to the exported
+// [RequestFromReader] function.
 package request
 
 import (
@@ -10,9 +13,9 @@ import (
 	"strings"
 )
 
-// CRLF (Carriage Return, Line Feed) is the sequence used
+// crlf (Carriage Return, Line Feed) is the sequence used
 // to denote newlines in HTTP requests.
-const CRLF = "\r\n"
+const crlf = "\r\n"
 
 const bufferSize = 8
 
@@ -75,12 +78,12 @@ func validateVersion(s string) (string, error) {
 
 // parseRequestLine builds a new RequestLine given an HTTP request as a string.
 func parseRequestLine(data []byte) (*RequestLine, int, error) {
-	bytes, _, found := bytes.Cut(data, []byte(CRLF))
+	bytes, _, found := bytes.Cut(data, []byte(crlf))
 	if !found {
 		return nil, 0, nil
 	}
 
-	numParsed := len(bytes) + len([]byte(CRLF))
+	numParsed := len(bytes) + len([]byte(crlf))
 
 	parts := strings.Split(string(bytes), " ")
 
