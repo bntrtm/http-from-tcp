@@ -161,11 +161,7 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 			return nil, err
 		}
 
-		size := len(buf) - nParsed
-		c := make([]byte, size)
-		copy(c, buf[nParsed:])
-		buf = c
-
+		copy(buf, buf[nParsed:])
 		readToIndex -= nParsed
 	}
 
