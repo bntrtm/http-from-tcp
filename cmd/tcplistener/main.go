@@ -28,8 +28,12 @@ func main() {
 			panic(err)
 		}
 
-		format := "Request line:\n- Method: %s\n- Target: %s\n- Version: %s"
+		format := "Request line:\n- Method: %s\n- Target: %s\n- Version: %s\n"
 		fmt.Printf(format, r.RequestLine.Method, r.RequestLine.RequestTarget, r.RequestLine.HTTPVersion)
+		fmt.Println("Headers:")
+		for k, v := range r.Headers {
+			fmt.Printf("- %s: %s\n", k, v)
+		}
 
 	}
 }
