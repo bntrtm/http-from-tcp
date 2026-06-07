@@ -1,51 +1,12 @@
 package main
 
 import (
-	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net"
-	"strings"
+
+	"github.com/bntrtm/http-from-tcp/internal/request"
 )
-
-func getLinesChannel(f io.ReadCloser) <-chan string {
-	fmt.Println("Reading data from TCP connection.")
-	fmt.Println("=====================================")
-
-	lines := make(chan string)
-
-	go func() {
-		defer f.Close()
-		defer close(lines)
-
-		currentLine := ""
-		for {
-			bytes := make([]byte, 8)
-			bytesRead, err := f.Read(bytes)
-			if err != nil {
-				if currentLine != "" {
-					lines <- currentLine
-				}
-				if errors.Is(err, io.EOF) {
-					break
-				} else {
-					log.Printf("Error while reading file: %s\n", err)
-					return
-				}
-			}
-			str := string(bytes[:bytesRead])
-			parts := strings.Split(str, "\n")
-			for i := 0; i < len(parts)-1; i++ {
-				lines <- fmt.Sprintf("%s%s", currentLine, parts[i])
-				currentLine = ""
-			}
-			currentLine += parts[len(parts)-1]
-		}
-	}()
-
-	return lines
-}
 
 func main() {
 	listener, err := net.Listen("tcp", ":42069")
@@ -62,9 +23,13 @@ func main() {
 		}
 		fmt.Println("Connection accepted:", conn.LocalAddr())
 
-		lines := getLinesChannel(conn)
-		for line := range lines {
-			fmt.Println(line)
+		r, err := request.RequestFromReader(conn)
+		if err != nil {
+			panic(err)
 		}
+
+		format := "Request line:\n- Method: %s\n- Target: %s\n- Version: %s"
+		fmt.Printf(format, r.RequestLine.Method, r.RequestLine.RequestTarget, r.RequestLine.HTTPVersion)
+
 	}
 }
