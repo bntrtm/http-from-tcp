@@ -1,3 +1,5 @@
+// Package headers provides the type Headers and a Parse function
+// pertinent to parsing HTTP/1.1 Headers.
 package headers
 
 import (
