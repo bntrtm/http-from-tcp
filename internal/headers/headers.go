@@ -3,6 +3,7 @@ package headers
 import (
 	"bytes"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -18,6 +19,19 @@ func NewHeaders() Headers {
 
 func (h Headers) Set(key, value string) {
 	h[key] = value
+}
+
+func validateFieldName(s string) (string, error) {
+	if strings.Contains(s, " ") {
+		return s, fmt.Errorf("bad field-line: whitespace found in field-name")
+	}
+
+	keyPattern := `^[!#$%&'*+\-.^_` + "`" + `|~0-9A-Za-z]+$`
+	if matched, _ := regexp.MatchString(keyPattern, s); !matched {
+		return s, fmt.Errorf("bad field-line: field-name may contain only letters, digits, or special characters !#$%%&'*+-.^_`|~")
+	}
+
+	return strings.ToLower(strings.TrimSpace(s)), nil
 }
 
 func (h Headers) Parse(data []byte) (n int, done bool, err error) {
@@ -38,10 +52,10 @@ func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 		return 0, false, fmt.Errorf("bad field-line: field-name and field-value must be separated with ':'")
 	}
 
-	if strings.Contains(parts[0], " ") {
-		return 0, false, fmt.Errorf("bad field-line: whitespace found in field-name")
+	fieldName, err := validateFieldName(parts[0])
+	if err != nil {
+		return 0, false, err
 	}
-	fieldName := strings.TrimSpace(parts[0])
 	fieldValue := strings.TrimSpace(parts[1])
 
 	h.Set(fieldName, fieldValue)
