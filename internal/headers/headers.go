@@ -23,6 +23,12 @@ func (h Headers) Set(key, value string) {
 	h[key] = value
 }
 
+// Get returns the value belonging to the given key, if it is present.
+func (h Headers) Get(key string) (string, bool) {
+	val, ok := h[strings.ToLower(key)]
+	return val, ok
+}
+
 func validateFieldName(s string) (string, error) {
 	if strings.Contains(s, " ") {
 		return s, fmt.Errorf("bad field-line: whitespace found in field-name")

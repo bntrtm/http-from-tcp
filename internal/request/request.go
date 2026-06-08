@@ -10,6 +10,7 @@ import (
 	"io"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	h "github.com/bntrtm/http-from-tcp/internal/headers"
@@ -32,12 +33,14 @@ type parserState int
 const (
 	StatusInitialized parserState = iota
 	StatusParsingHeaders
+	StatusParsingBody
 	StatusDone
 )
 
 type Request struct {
 	RequestLine RequestLine
 	Headers     h.Headers
+	Body        []byte
 	state       parserState
 }
 
@@ -89,6 +92,7 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 	r := &Request{
 		state:   StatusInitialized,
 		Headers: h.NewHeaders(),
+		Body:    make([]byte, 0),
 	}
 	for r.state != StatusDone {
 		if readToIndex >= len(buf) {
@@ -157,10 +161,27 @@ func (r *Request) parseSingle(data []byte) (int, error) {
 			return 0, err
 		}
 		if done {
-			r.state = StatusDone
+			r.state = StatusParsingBody
 		}
 		return n, nil
-
+	case StatusParsingBody:
+		contentLengthHeader, ok := r.Headers.Get("content-length")
+		if !ok {
+			// NOTE: we assume no body if content-length header not present
+			r.state = StatusDone
+			return len(data), nil
+		}
+		contentLength, err := strconv.Atoi(contentLengthHeader)
+		if err != nil {
+			return 0, fmt.Errorf("malformed Content-Length header: %w", err)
+		}
+		r.Body = append(r.Body, data...)
+		if len(r.Body) > contentLength {
+			return 0, fmt.Errorf("body length does not match stated content-length")
+		} else if len(r.Body) == contentLength {
+			r.state = StatusDone
+		}
+		return len(data), nil
 	case StatusDone:
 		return 0, fmt.Errorf("cannot read data with Request in done state")
 	default:
