@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"fmt"
 	"log"
 	"net"
@@ -10,6 +9,8 @@ import (
 	"github.com/bntrtm/http-from-tcp/internal/request"
 	"github.com/bntrtm/http-from-tcp/internal/response"
 )
+
+type Handler func(w *response.Writer, r *request.Request)
 
 type serverState int
 
@@ -53,29 +54,18 @@ func (s *Server) Close() error {
 
 func (s *Server) handle(conn net.Conn) {
 	defer conn.Close()
+	w := response.NewWriter(conn)
 
 	r, err := request.RequestFromReader(conn)
 	if err != nil {
-		handlerErr := &HandlerError{
-			StatusCode: response.StatusBadRequest,
-			Message:    err.Error(),
-		}
-		handlerErr.Write(conn)
+		_ = w.WriteStatusLine(response.StatusBadRequest)
+		body := fmt.Appendf([]byte{}, "Error parsing request: %v", err)
+		_ = w.WriteHeaders(response.GetDefaultHeaders(len(body)))
+		_, _ = w.WriteBody(body)
 		return
 	}
 
-	buf := bytes.NewBuffer([]byte{})
-
-	handlerErr := s.handler(buf, r)
-	if handlerErr != nil {
-		handlerErr.Write(conn)
-		return
-	}
-
-	_ = response.WriteStatusLine(conn, response.StatusOK)
-	headers := response.GetDefaultHeaders(len(buf.Bytes()))
-	_ = response.WriteHeaders(conn, headers)
-	_, _ = conn.Write(buf.Bytes())
+	s.handler(w, r)
 }
 
 func (s *Server) listen() {
