@@ -34,6 +34,34 @@ func main() {
 	log.Println("Server gracefully stopped")
 }
 
+func handler(w *response.Writer, r *request.Request) {
+	if strings.HasPrefix(r.RequestLine.RequestTarget, "/httpbin") {
+		proxyHandler(w, r)
+		return
+	}
+	switch r.RequestLine.RequestTarget {
+	case "/yourproblem":
+		handlerBadRequest(w, r)
+		return
+	case "/myproblem":
+		handlerInternalServerError(w, r)
+		return
+	case "/video":
+		handlerVideo(w, r)
+		return
+	}
+	handlerOK(w, r)
+}
+
+func handlerVideo(w *response.Writer, _ *request.Request) {
+	body, _ := os.ReadFile(`./assets/vim.mp4`)
+	h := response.GetDefaultHeaders(len(body))
+	h.Override("Content-Type", "video/mp4")
+	_ = w.WriteStatusLine(response.StatusOK)
+	_ = w.WriteHeaders(h)
+	_, _ = w.WriteBody(body)
+}
+
 func proxyHandler(w *response.Writer, r *request.Request) {
 	target := strings.TrimPrefix(r.RequestLine.RequestTarget, "/httpbin/")
 	url := "https://httpbin.org/" + target
@@ -88,22 +116,6 @@ func proxyHandler(w *response.Writer, r *request.Request) {
 		fmt.Println("Error writing trailers:", err)
 	}
 	fmt.Println("Wrote trailers")
-}
-
-func handler(w *response.Writer, r *request.Request) {
-	if strings.HasPrefix(r.RequestLine.RequestTarget, "/httpbin") {
-		proxyHandler(w, r)
-		return
-	}
-	if r.RequestLine.RequestTarget == "/yourproblem" {
-		handlerBadRequest(w, r)
-		return
-	}
-	if r.RequestLine.RequestTarget == "/myproblem" {
-		handlerInternalServerError(w, r)
-		return
-	}
-	handlerOK(w, r)
 }
 
 func handlerBadRequest(w *response.Writer, _ *request.Request) {
