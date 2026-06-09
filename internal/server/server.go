@@ -5,6 +5,8 @@ import (
 	"log"
 	"net"
 	"sync/atomic"
+
+	"github.com/bntrtm/http-from-tcp/internal/response"
 )
 
 type serverState int
@@ -46,12 +48,15 @@ func (s *Server) Close() error {
 
 func (s *Server) handle(conn net.Conn) {
 	defer conn.Close()
-	response := "HTTP/1.1 200 OK\r\n" +
-		"Content-Type: text/plain\r\n" +
-		"Content-Length: 13\r\n" +
-		"\r\n" +
-		"Hello World!\n"
-	_, _ = conn.Write([]byte(response))
+	err := response.WriteStatusLine(conn, 200)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	err = response.WriteHeaders(conn, response.GetDefaultHeaders(0))
+	if err != nil {
+		log.Println(err)
+	}
 }
 
 func (s *Server) listen() {
