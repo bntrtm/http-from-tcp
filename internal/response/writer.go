@@ -13,6 +13,7 @@ const (
 	StatusInitialized writerState = iota
 	StatusWritingHeaders
 	StatusWritingBody
+	StatusWritingTrailers
 	StatusDone
 )
 
@@ -46,9 +47,16 @@ func (w *Writer) WriteStatusLine(statusCode StatusCode) error {
 }
 
 func (w *Writer) newLine(closing bool) error {
-	subject := "headers"
-	if w.state == StatusWritingBody {
+	subject := ""
+	switch w.state {
+	case StatusWritingHeaders:
+		subject = "headers"
+	case StatusWritingBody:
 		subject = "body"
+	case StatusWritingTrailers:
+		subject = "trailers"
+	default:
+		subject = fmt.Sprintf("in incompatible state %d", w.state)
 	}
 
 	_, err := w.Write([]byte("\r\n"))
@@ -68,7 +76,7 @@ func (w *Writer) WriteHeaders(headers headers.Headers) error {
 	case StatusWritingHeaders:
 	case StatusWritingBody:
 		return fmt.Errorf("could not write headers to response writer; headers already written")
-	case StatusDone:
+	case StatusWritingTrailers, StatusDone:
 		return fmt.Errorf("could not write headers to response writer; writer already finished")
 	}
 
@@ -104,7 +112,7 @@ func (w *Writer) WriteBody(p []byte) (int, error) {
 
 	n, err := w.Write(p)
 	if err == nil {
-		w.state = StatusDone
+		w.state = StatusWritingTrailers
 		return n, nil
 	} else {
 		return n, fmt.Errorf("error writing body: %w", err)
@@ -148,7 +156,36 @@ func (w *Writer) WriteChunkedBodyDone() (int, error) {
 	if err != nil {
 		return n, err
 	}
-	_ = w.newLine(false)
 	_ = w.newLine(true)
-	return n + 4, nil
+
+	w.state = StatusWritingTrailers
+	return n + 2, nil
+}
+
+func (w *Writer) WriteTrailers(trailers headers.Headers) error {
+	switch w.state {
+	case StatusInitialized, StatusWritingHeaders, StatusWritingBody:
+		return fmt.Errorf("could not write trailers to response writer; missing initialization, headers, or body")
+	case StatusWritingTrailers:
+	case StatusDone:
+		return fmt.Errorf("could not write trailers to response writer; trailers already written")
+	}
+
+	for k, v := range trailers {
+		_, err := fmt.Fprintf(w, "%s: %s", k, v)
+		if err != nil {
+			return fmt.Errorf("could not write trailers for response: %w", err)
+		}
+		err = w.newLine(false)
+		if err != nil {
+			return err
+		}
+	}
+	err := w.newLine(true)
+	if err != nil {
+		return err
+	}
+
+	w.state = StatusDone
+	return nil
 }
