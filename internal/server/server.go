@@ -1,11 +1,13 @@
 package server
 
 import (
+	"bytes"
 	"fmt"
 	"log"
 	"net"
 	"sync/atomic"
 
+	"github.com/bntrtm/http-from-tcp/internal/request"
 	"github.com/bntrtm/http-from-tcp/internal/response"
 )
 
@@ -16,12 +18,14 @@ const (
 	StatusClosed
 )
 
+// Server is an HTTP 1.1 server
 type Server struct {
 	listener net.Listener
 	isClosed atomic.Bool
+	handler  Handler
 }
 
-func Serve(port int) (*Server, error) {
+func Serve(port int, handler Handler) (*Server, error) {
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		return nil, err
@@ -32,6 +36,7 @@ func Serve(port int) (*Server, error) {
 
 	s := &Server{
 		listener: listener,
+		handler:  handler,
 	}
 
 	go s.listen()
@@ -48,15 +53,29 @@ func (s *Server) Close() error {
 
 func (s *Server) handle(conn net.Conn) {
 	defer conn.Close()
-	err := response.WriteStatusLine(conn, 200)
+
+	r, err := request.RequestFromReader(conn)
 	if err != nil {
-		log.Println(err)
+		handlerErr := &HandlerError{
+			StatusCode: response.StatusBadRequest,
+			Message:    err.Error(),
+		}
+		handlerErr.Write(conn)
 		return
 	}
-	err = response.WriteHeaders(conn, response.GetDefaultHeaders(0))
-	if err != nil {
-		log.Println(err)
+
+	buf := bytes.NewBuffer([]byte{})
+
+	handlerErr := s.handler(buf, r)
+	if handlerErr != nil {
+		handlerErr.Write(conn)
+		return
 	}
+
+	_ = response.WriteStatusLine(conn, response.StatusOK)
+	headers := response.GetDefaultHeaders(len(buf.Bytes()))
+	_ = response.WriteHeaders(conn, headers)
+	_, _ = conn.Write(buf.Bytes())
 }
 
 func (s *Server) listen() {
