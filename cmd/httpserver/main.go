@@ -1,9 +1,13 @@
 package main
 
 import (
+	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/bntrtm/http-from-tcp/internal/request"
@@ -28,7 +32,54 @@ func main() {
 	log.Println("Server gracefully stopped")
 }
 
+func proxyHandler(w *response.Writer, r *request.Request) {
+	target := strings.TrimPrefix(r.RequestLine.RequestTarget, "/httpbin/")
+	url := "https://httpbin.org/" + target
+	fmt.Println("Proxying to", url)
+	resp, err := http.Get(url)
+	if err != nil {
+		handlerInternalServerError(w, r)
+		return
+	}
+	defer resp.Body.Close()
+
+	_ = w.WriteStatusLine(response.StatusOK)
+	h := response.GetDefaultHeaders(0)
+	h.Remove("Content-Length")
+	h.Override("Transfer-Encoding", "chunked")
+	_ = w.WriteHeaders(h)
+
+	const maxChunkSize = 1024
+	buffer := make([]byte, maxChunkSize)
+	for {
+		n, err := resp.Body.Read(buffer)
+		fmt.Println("Read", n, "bytes")
+		if n > 0 {
+			_, err = w.WriteChunkedBody(buffer[:n])
+			if err != nil {
+				fmt.Println("Error writing chunked body:", err)
+				break
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			fmt.Println("Error reading response body:", err)
+			break
+		}
+	}
+	_, err = w.WriteChunkedBodyDone()
+	if err != nil {
+		fmt.Println("Error writing chunked body done:", err)
+	}
+}
+
 func handler(w *response.Writer, r *request.Request) {
+	if strings.HasPrefix(r.RequestLine.RequestTarget, "/httpbin") {
+		proxyHandler(w, r)
+		return
+	}
 	if r.RequestLine.RequestTarget == "/yourproblem" {
 		handlerBadRequest(w, r)
 		return

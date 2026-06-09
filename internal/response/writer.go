@@ -46,12 +46,17 @@ func (w *Writer) WriteStatusLine(statusCode StatusCode) error {
 }
 
 func (w *Writer) newLine(closing bool) error {
+	subject := "headers"
+	if w.state == StatusWritingBody {
+		subject = "body"
+	}
+
 	_, err := w.Write([]byte("\r\n"))
 	if err != nil {
 		if closing {
-			return fmt.Errorf("could not write CRLF while writing header: %w", err)
+			return fmt.Errorf("could not write line-terminating CRLF while writing %s: %w", subject, err)
 		}
-		return fmt.Errorf("could not write closing CRLF after writing headers: %w", err)
+		return fmt.Errorf("could not write closing CRLF after writing %s: %w", subject, err)
 	}
 	return nil
 }
@@ -104,4 +109,46 @@ func (w *Writer) WriteBody(p []byte) (int, error) {
 	} else {
 		return n, fmt.Errorf("error writing body: %w", err)
 	}
+}
+
+func (w *Writer) WriteChunkedBody(p []byte) (int, error) {
+	switch w.state {
+	case StatusInitialized:
+		return 0, fmt.Errorf("could not write headers to response writer; missing status line, headers")
+	case StatusWritingHeaders:
+		return 0, fmt.Errorf("could not write body to response writer; headers not written")
+	case StatusWritingBody:
+	case StatusDone:
+		return 0, fmt.Errorf("could not write body to response writer; writer already finished")
+	}
+
+	written := 0
+
+	chunkLen := fmt.Sprintf("%x", len(p))
+	n, err := w.Write([]byte(chunkLen))
+	written += n + 2
+	if err != nil {
+		return n, err
+	}
+	_ = w.newLine(false)
+	written += 2
+	n, err = w.Write(p)
+	written += n + 2
+	if err != nil {
+		return n, err
+	}
+	_ = w.newLine(false)
+	written += 2
+
+	return written, nil
+}
+
+func (w *Writer) WriteChunkedBodyDone() (int, error) {
+	n, err := w.Write([]byte("0"))
+	if err != nil {
+		return n, err
+	}
+	_ = w.newLine(false)
+	_ = w.newLine(true)
+	return n + 4, nil
 }
